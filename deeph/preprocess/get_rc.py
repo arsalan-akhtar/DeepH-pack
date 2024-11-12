@@ -17,8 +17,63 @@ class Neighbours:
         return 'Rs: {}\ndists: {}\neijs: {}\nindices: {}'.format(
             self.Rs, self.dists, self.indices, self.eijs)
 
-
 def _get_local_coordinate(eij, neighbours_i, gen_rc_idx=False, atom_j=None, atom_j_R=None, r2_rand=False):
+    if gen_rc_idx:
+        rc_idx = np.full(8, np.nan, dtype=np.int32)
+        assert r2_rand is False
+        assert atom_j is not None, 'atom_j must be specified when gen_rc_idx is True'
+        assert atom_j_R is not None, 'atom_j_R must be specified when gen_rc_idx is True'
+    else:
+        rc_idx = None
+    if r2_rand:
+        r2_list = []
+
+    # Use the direct bond r1
+    if not np.allclose(eij.detach(), torch.zeros_like(eij)):
+        r1 = eij
+        if gen_rc_idx:
+            rc_idx[0] = atom_j
+            rc_idx[1:4] = atom_j_R
+    else:
+        if len(neighbours_i.eijs) > 1:
+            r1 = neighbours_i.eijs[1]
+            if gen_rc_idx:
+                rc_idx[0] = neighbours_i.indices[1]
+                rc_idx[1:4] = neighbours_i.Rs[1]
+        else:
+            # Not enough neighbors, set to zero (or handle as needed)
+            raise ValueError("Not enough neighbors to calculate local coordinate")
+
+    r2_flag = None
+    for r2, r2_index, r2_R in zip(neighbours_i.eijs[1:], neighbours_i.indices[1:], neighbours_i.Rs[1:]):
+        if torch.norm(torch.cross(r1, r2)) > 1e-6:
+            if gen_rc_idx:
+                rc_idx[4] = r2_index
+                rc_idx[5:8] = r2_R
+            r2_flag = True
+            if r2_rand:
+                if (len(r2_list) == 0) or (torch.norm(r2_list[0]) + 0.5 > torch.norm(r2)):
+                    r2_list.append(r2)
+                else:
+                    break
+            else:
+                break
+
+    if r2_flag is None:
+        raise ValueError("No linear independent chemical bond found in the Rcut range, the structure may be 1D or Rcut is too small.")
+    
+    if r2_rand:
+        r2 = r2_list[np.random.randint(len(r2_list))]
+
+    local_coordinate_1 = r1 / torch.norm(r1)
+    local_coordinate_2 = torch.cross(r1, r2) / torch.norm(torch.cross(r1, r2))
+    local_coordinate_3 = torch.cross(local_coordinate_1, local_coordinate_2)
+
+    return torch.stack([local_coordinate_1, local_coordinate_2, local_coordinate_3], dim=-1), rc_idx
+
+
+
+def _get_local_coordinate_old(eij, neighbours_i, gen_rc_idx=False, atom_j=None, atom_j_R=None, r2_rand=False):
     if gen_rc_idx:
         rc_idx = np.full(8, np.nan, dtype=np.int32)
         assert r2_rand is False
